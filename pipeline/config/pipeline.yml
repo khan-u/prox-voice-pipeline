@@ -1,0 +1,17 @@
+mode: local   # local | azure  (override with PIPELINE_MODE env var)
+
+local:
+  data_root: experiments/data          # raw JSON/JSONL telemetry (repo-relative)
+  bronze_root: pipeline/lake/bronze
+  silver_root: pipeline/lake/silver
+  gold_root:   pipeline/lake/gold
+
+azure:
+  storage_account: ${AZURE_STORAGE_ACCOUNT}
+  container: prox-voice
+  bronze_root: abfss://prox-voice@${AZURE_STORAGE_ACCOUNT}.dfs.core.windows.net/bronze
+  silver_root: abfss://prox-voice@${AZURE_STORAGE_ACCOUNT}.dfs.core.windows.net/silver
+  gold_root:   abfss://prox-voice@${AZURE_STORAGE_ACCOUNT}.dfs.core.windows.net/gold
+  eventhub_namespace: ${AZURE_EVENTHUB_NAMESPACE}
+  eventhub_name: wsn-telemetry
+  eventhub_conn_str: ${AZURE_EVENTHUB_CONN_STR}
