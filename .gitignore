@@ -16,5 +16,20 @@ rig/rig_latency.csv
 # Generated audio fixtures (reproduced by ensureToneWav / ensureSpeechWav on first run)
 experiments/assets/
 
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# PySpark / Delta Lake local state
+spark-warehouse/
+metastore_db/
+
+# dbt
+target/
+dbt_packages/
+logs/
+
 # OS
 .DS_Store
