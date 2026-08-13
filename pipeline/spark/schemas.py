@@ -9,7 +9,9 @@ transforms that consume them.
 """
 from pyspark.sql.types import (
     ArrayType,
+    BooleanType,
     IntegerType,
+    LongType,
     StringType,
     StructField,
     StructType,
@@ -66,4 +68,51 @@ VOICE_SUMMARY = StructType([
     StructField("N", IntegerType()),
     StructField("holdMs", IntegerType()),
     StructField("perClient", ArrayType(PER_CLIENT)),
+])
+
+# One connected link as reported by the real-network client reporter. This is
+# the nested array that silver explodes to one fact row per link.
+LINK = StructType([
+    StructField("index", IntegerType()),
+    StructField("detectedMs", IntegerType()),
+    StructField("connectedMs", IntegerType()),
+    StructField("setupMs", IntegerType()),
+    StructField("failed", BooleanType()),
+    StructField("candidateType", StringType()),
+    StructField("rttMs", IntegerType()),
+    StructField("latRawMs", IntegerType()),
+    StructField("latCalMs", IntegerType()),
+    StructField("glare", IntegerType()),
+])
+
+# One line of wsn-remote-reports.jsonl: a per-session real-network report keyed
+# by condition tag (cond) and page-load session id (sid).
+REMOTE_REPORT = StructType([
+    StructField("cond", StringType()),
+    StructField("sid", StringType()),
+    StructField("ts", LongType()),
+    StructField("peers", IntegerType()),
+    StructField("kpis", KPI),
+    StructField("links", ArrayType(LINK)),
+    StructField("sense", SENSE),
+])
+
+# Silver fact grain: one row per connected link, flattened from either a
+# voice-summary client or a realnet report. Nullable columns carry the
+# dimension that a given source provides (client for local runs, condition/
+# session for realnet).
+SILVER_FACT = StructType([
+    StructField("record_type", StringType()),
+    StructField("source_file", StringType()),
+    StructField("condition", StringType()),
+    StructField("session_id", StringType()),
+    StructField("n_peers", IntegerType()),
+    StructField("client", StringType()),
+    StructField("link_index", IntegerType()),
+    StructField("setup_ms", IntegerType()),
+    StructField("rtt_ms", IntegerType()),
+    StructField("candidate_type", StringType()),
+    StructField("lat_raw_ms", IntegerType()),
+    StructField("glare", IntegerType()),
+    StructField("ingested_at", StringType()),
 ])
