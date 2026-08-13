@@ -11,6 +11,10 @@ from pyspark.sql import functions as F
 
 from pipeline.common.records import classify, peer_count
 
+# The append-only real-network stream. Landed separately from the per-run
+# exports because it arrives line-by-line with at-least-once delivery.
+STREAM_FILE = "wsn-remote-reports.jsonl"
+
 
 def discover_exports(names):
     """Return the whole-file JSON exports to land, in stable order.
@@ -61,3 +65,33 @@ def land_json_exports(spark, data_root, bronze_root, ingested_at):
         .save(os.path.join(bronze_root, "raw_json"))
     )
     return len(names)
+
+
+def land_jsonl_stream(spark, data_root, bronze_root, ingested_at):
+    """Land the append-only realnet stream into a bronze Delta table.
+
+    One row per line: raw JSON text plus provenance. At-least-once delivery can
+    replay a line, so identical (sid, ts) reports are de-duplicated — a redelivery
+    carries the same session id and client timestamp. Returns the landed count,
+    or 0 if the stream file is absent.
+    """
+    path = os.path.join(data_root, STREAM_FILE)
+    if not os.path.exists(path):
+        return 0
+    df = (
+        spark.read.text(path)
+        .withColumnRenamed("value", "payload")
+        .where(F.length(F.trim(F.col("payload"))) > 0)
+        .withColumn("sid", F.get_json_object("payload", "$.sid"))
+        .withColumn("ts", F.get_json_object("payload", "$.ts"))
+        .dropDuplicates(["sid", "ts"])
+        .withColumn("source_file", F.lit(STREAM_FILE))
+        .withColumn("record_type", F.lit(classify(STREAM_FILE)))
+        .withColumn("ingested_at", F.lit(ingested_at))
+    )
+    (
+        df.write.format("delta")
+        .mode("overwrite")
+        .save(os.path.join(bronze_root, "raw_stream"))
+    )
+    return df.count()
