@@ -9,7 +9,7 @@ grain.
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-from pipeline.spark.schemas import REMOTE_REPORT
+from pipeline.spark.schemas import REMOTE_REPORT, VOICE_SUMMARY
 
 # Column order of the silver link-fact grain (mirrors schemas.SILVER_FACT).
 FACT_COLUMNS = [
@@ -17,6 +17,20 @@ FACT_COLUMNS = [
     "client", "link_index", "setup_ms", "rtt_ms", "candidate_type",
     "lat_raw_ms", "glare", "ingested_at",
 ]
+
+
+def normalize_candidate(mix):
+    """Collapse a candidate-mix histogram to the effective connection type.
+
+    WebRTC reports host/srflx/relay candidate counts; the effective path is the
+    highest tier actually used (a relay pair beats server-reflexive beats host).
+    Priority relay > srflx > host, matching how relayPct is reported.
+    """
+    return (
+        F.when(mix["relay"] > 0, F.lit("relay"))
+        .when(mix["srflx"] > 0, F.lit("srflx"))
+        .otherwise(F.lit("host"))
+    )
 
 
 def explode_realnet_links(stream_df):
@@ -51,5 +65,33 @@ def explode_realnet_links(stream_df):
         F.col("link.candidateType").alias("candidate_type"),
         F.col("link.latRawMs").alias("lat_raw_ms"),
         F.col("link.glare").alias("glare"),
+        F.col("ingested_at"),
+    )
+
+
+def flatten_voice_kpis(json_df):
+    """Flatten voice-summary per-client KPI blocks onto the link-fact grain.
+
+    Local N-client runs report a per-client KPI rollup rather than a links[]
+    array, so each client contributes one fact row: its median setup/latency,
+    its glare total, and a candidate type normalized from the candidate mix.
+    link_index is null (client grain); condition/session are null (local run).
+    """
+    voice = json_df.where(F.col("record_type") == "voice")
+    parsed = voice.withColumn("s", F.from_json("payload", VOICE_SUMMARY))
+    client = parsed.withColumn("c", F.explode("s.perClient"))
+    return client.select(
+        F.col("record_type"),
+        F.col("source_file"),
+        F.lit(None).cast("string").alias("condition"),
+        F.lit(None).cast("string").alias("session_id"),
+        F.col("s.N").alias("n_peers"),
+        F.col("c.client").alias("client"),
+        F.lit(None).cast("int").alias("link_index"),
+        F.col("c.kpis.setupMedianMs").alias("setup_ms"),
+        F.lit(None).cast("int").alias("rtt_ms"),
+        normalize_candidate(F.col("c.kpis.candidateMix")).alias("candidate_type"),
+        F.col("c.kpis.latRawMedianMs").alias("lat_raw_ms"),
+        F.col("c.kpis.glareTotal").alias("glare"),
         F.col("ingested_at"),
     )
