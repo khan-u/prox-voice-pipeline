@@ -1,0 +1,20 @@
+name: prox_voice_pipeline
+version: "1.0.0"
+config-version: 2
+
+profile: prox_voice
+
+model-paths: ["models"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Silver staging views normalize the Delta tables the Spark jobs produce; gold
+# marts materialize as Delta tables the figures and parity gate read.
+models:
+  prox_voice_pipeline:
+    silver:
+      +materialized: view
+    gold:
+      +materialized: table
+      +file_format: delta
