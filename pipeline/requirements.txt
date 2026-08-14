@@ -16,6 +16,9 @@ apache-airflow==2.9.3
 # Azure streaming
 azure-eventhub==5.11.7
 
+# Figures
+matplotlib==3.11.1
+
 # Testing + utilities
 pytest==8.3.2
 pandas==2.2.2
