@@ -25,6 +25,8 @@ __pycache__/
 # PySpark / Delta Lake local state
 spark-warehouse/
 metastore_db/
+derby.log
+lake/
 
 # dbt
 target/

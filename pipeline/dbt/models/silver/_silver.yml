@@ -1,0 +1,20 @@
+version: 2
+
+# The silver staging views wrap the Delta tables the Spark jobs materialize
+# under `silver_root`. The path is passed as a dbt var (default lake/silver);
+# set it to an ADLS abfss:// root for a cloud target.
+models:
+  - name: stg_link_fact
+    description: One row per connected link (realnet) or client (voice runs).
+  - name: stg_voice_client
+    description: Rich per-client voice KPIs for the vs-N marts.
+  - name: stg_mobility
+    description: Per-run mobility phases with a complete-case flag.
+  - name: stg_audiogap
+    description: Per-run listener audio-gap timings with a validity flag.
+  - name: stg_gracegap
+    description: Per-run grace-window duty-cycle measurements.
+  - name: stg_dtx
+    description: Per-run DTX uplink by source and DTX on/off.
+  - name: stg_sensing
+    description: Per-client sensor suppression by scenario.
