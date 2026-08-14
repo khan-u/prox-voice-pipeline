@@ -8,8 +8,55 @@ grain.
 """
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
+from pyspark.sql.types import (
+    BooleanType,
+    DoubleType,
+    IntegerType,
+    MapType,
+    StringType,
+    StructField,
+    StructType,
+)
 
 from pipeline.spark.schemas import REMOTE_REPORT, VOICE_SUMMARY
+
+# --- Read schemas for the per-experiment JSON records (one file per run). ---
+
+_PHASE = StructType([StructField("ms", IntegerType())])
+_MOBILITY = StructType([
+    StructField("phases", StructType([
+        StructField("initialForm", _PHASE),
+        StructField("teardown", _PHASE),
+        StructField("reconnect", _PHASE),
+    ])),
+])
+_AUDIOGAP = StructType([
+    StructField("valid", BooleanType()),
+    StructField("audioStopAfterOutMs", IntegerType()),
+    StructField("reconnectAudioGapMs", IntegerType()),
+    StructField("totalSilenceMs", IntegerType()),
+])
+_GRACEGAP = StructType([
+    StructField("absenceMs", IntegerType()),
+    StructField("graceMs", IntegerType()),
+    StructField("reconnectGapMs", IntegerType()),
+    StructField("holdKbps", DoubleType()),
+    StructField("stopAfterOutMs", IntegerType()),
+])
+_DTX = StructType([
+    StructField("source", StringType()),
+    StructField("dtx", BooleanType()),
+    StructField("uplinkKbps", DoubleType()),
+])
+_SENSING = StructType([
+    StructField("scenario", StringType()),
+    StructField("clients", MapType(
+        StringType(),
+        StructType([StructField("stats", StructType([
+            StructField("suppressedPct", IntegerType()),
+        ]))]),
+    )),
+])
 
 # Column order of the silver link-fact grain (mirrors schemas.SILVER_FACT).
 FACT_COLUMNS = [
@@ -93,5 +140,94 @@ def flatten_voice_kpis(json_df):
         normalize_candidate(F.col("c.kpis.candidateMix")).alias("candidate_type"),
         F.col("c.kpis.latRawMedianMs").alias("lat_raw_ms"),
         F.col("c.kpis.glareTotal").alias("glare"),
+        F.col("ingested_at"),
+    )
+
+
+def normalize_mobility(json_df):
+    """One row per mobility run with a complete-case validity flag.
+
+    A cycle is valid only when all three phases completed (form, teardown,
+    reconnect >= 0); a run where one phase timed out is a failed trial, and the
+    phases are causally coupled so a partial run corrupts the others. The flag
+    is materialized here so the mart just filters on it.
+    """
+    df = json_df.where(F.col("record_type") == "mobility")
+    p = df.withColumn("m", F.from_json("payload", _MOBILITY))
+    form = F.col("m.phases.initialForm.ms")
+    tear = F.col("m.phases.teardown.ms")
+    recon = F.col("m.phases.reconnect.ms")
+    return p.select(
+        F.col("source_file"),
+        form.alias("form_ms"),
+        tear.alias("teardown_ms"),
+        recon.alias("reconnect_ms"),
+        ((form >= 0) & (tear >= 0) & (recon >= 0)).alias("complete_case"),
+        F.col("ingested_at"),
+    )
+
+
+def normalize_audiogap(json_df):
+    """One row per audio-gap run; `valid` gates the mart to measured runs."""
+    df = json_df.where(F.col("record_type") == "audiogap")
+    a = df.withColumn("a", F.from_json("payload", _AUDIOGAP))
+    return a.select(
+        F.col("source_file"),
+        F.coalesce(F.col("a.valid"), F.lit(False)).alias("valid"),
+        F.col("a.audioStopAfterOutMs").alias("stop_ms"),
+        F.col("a.reconnectAudioGapMs").alias("reconnect_ms"),
+        F.col("a.totalSilenceMs").alias("total_silence_ms"),
+        F.col("ingested_at"),
+    )
+
+
+def normalize_gracegap(json_df):
+    """One row per grace-window run, keyed by (absence, grace) duty-cycle cell."""
+    df = json_df.where(F.col("record_type") == "gracegap")
+    g = df.withColumn("g", F.from_json("payload", _GRACEGAP))
+    return g.select(
+        F.col("source_file"),
+        F.col("g.absenceMs").alias("absence_ms"),
+        F.col("g.graceMs").alias("grace_ms"),
+        F.col("g.reconnectGapMs").alias("reconnect_gap_ms"),
+        F.col("g.holdKbps").alias("hold_kbps"),
+        F.col("g.stopAfterOutMs").alias("stop_ms"),
+        F.col("ingested_at"),
+    )
+
+
+def normalize_dtx(json_df):
+    """One row per DTX run, keyed by (source, dtx on/off)."""
+    df = json_df.where(F.col("record_type") == "dtx")
+    d = df.withColumn("d", F.from_json("payload", _DTX))
+    return d.select(
+        F.col("source_file"),
+        F.col("d.source").alias("source"),
+        F.coalesce(F.col("d.dtx"), F.lit(False)).alias("dtx"),
+        F.col("d.uplinkKbps").alias("uplink_kbps"),
+        F.col("ingested_at"),
+    )
+
+
+def normalize_sensing(json_df):
+    """One row per (sensing run, client): the client's suppression percentage.
+
+    The clients map is exploded so each node's suppressedPct is its own row,
+    matching how the suppression mart takes a median across all clients in a
+    scenario.
+    """
+    df = json_df.where(F.col("record_type") == "sensing")
+    s = df.withColumn("s", F.from_json("payload", _SENSING))
+    client = s.select(
+        F.col("source_file"),
+        F.col("s.scenario").alias("scenario"),
+        F.explode("s.clients").alias("client", "cdata"),
+        F.col("ingested_at"),
+    )
+    return client.select(
+        F.col("source_file"),
+        F.col("scenario"),
+        F.col("client"),
+        F.col("cdata.stats.suppressedPct").alias("suppressed_pct"),
         F.col("ingested_at"),
     )
