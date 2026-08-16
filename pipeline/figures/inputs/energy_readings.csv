@@ -1,0 +1,3 @@
+device,metric,unit,baseline,with_voice
+MacBook,power,mW,4685,5622
+iPhone,cpu,%,17.2,21.5
