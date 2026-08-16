@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: kpi_vs_n
+    description: Formation / latency / uplink / glare vs cluster size N.
+    columns:
+      - name: n_peers
+        tests:
+          - not_null
+          - unique
+  - name: sensing_suppression
+    description: Report-suppression median by sensing scenario.
+    columns:
+      - name: scenario
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["idle", "walk", "conv", "churn"]
+  - name: mobility_cycles
+    description: Complete-case mobility timing summary.
+    columns:
+      - name: complete_cycles
+        tests:
+          - not_null
+  - name: audiogap
+    description: Valid-only listener audio-gap summary.
+    columns:
+      - name: valid_runs
+        tests:
+          - not_null
+  - name: realnet_conditions
+    description: Per-condition real-network connection timing.
+    columns:
+      - name: path
+        tests:
+          - accepted_values:
+              values: ["direct", "relay"]
+      - name: access
+        tests:
+          - accepted_values:
+              values: ["cellular", "home", "other"]
+  - name: dtx_uplink
+    description: DTX uplink by source and DTX on/off.
+    columns:
+      - name: source
+        tests:
+          - accepted_values:
+              values: ["tone", "speech"]
+  - name: gracegap_series
+    description: Grace-window duty-cycle sweep by absence and grace.
+    columns:
+      - name: absence_ms
+        tests:
+          - not_null
