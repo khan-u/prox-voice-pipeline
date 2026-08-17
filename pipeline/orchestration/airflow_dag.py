@@ -13,9 +13,12 @@ from airflow.operators.python import PythonOperator
 
 DEFAULT_ARGS = {
     "owner": "prox-voice",
-    "retries": 0,
+    "retries": 2,
     "retry_delay": timedelta(minutes=2),
 }
+
+# Gold marts validated by the GX checkpoint before publish.
+GOLD_MARTS = ["kpi_vs_n", "sensing_suppression", "realnet_conditions"]
 
 
 def _spark():
@@ -67,6 +70,31 @@ def run_dbt(**_):
     subprocess.run(["dbt", "build"], cwd="pipeline/dbt", check=True)
 
 
+def gx_checkpoint(**_):
+    from pipeline.common.config import load_config
+    from pipeline.quality.expectations.gold_marts import run_checkpoint
+
+    cfg = load_config()
+    spark = _spark()
+    marts = {
+        name: spark.read.format("delta").load(f"{cfg['gold_root']}/{name}")
+        for name in GOLD_MARTS
+    }
+    _per_mart, overall = run_checkpoint(marts)
+    if not overall:
+        raise ValueError(f"GX checkpoint failed: {_per_mart}")
+
+
+def parity(**_):
+    # Imported lazily: the parity gate lands in its own module and is not needed
+    # to parse or run the rest of the DAG.
+    from pipeline.validate.parity_check import run_parity
+
+    ok, report = run_parity()
+    if not ok:
+        raise ValueError(f"parity gate failed: {report}")
+
+
 def render_figures(**_):
     from pipeline.figures import (
         fig02_setup_vs_n,
@@ -102,6 +130,9 @@ with DAG(
     t_bronze = PythonOperator(task_id="land_bronze", python_callable=land_bronze)
     t_silver = PythonOperator(task_id="build_silver", python_callable=build_silver)
     t_dbt = PythonOperator(task_id="run_dbt", python_callable=run_dbt)
+    t_gx = PythonOperator(task_id="gx_checkpoint", python_callable=gx_checkpoint)
+    t_parity = PythonOperator(task_id="parity", python_callable=parity)
     t_figures = PythonOperator(task_id="render_figures", python_callable=render_figures)
 
-    t_bronze >> t_silver >> t_dbt >> t_figures
+    # Gold must pass the GX checkpoint and the parity gate before figures publish.
+    t_bronze >> t_silver >> t_dbt >> t_gx >> t_parity >> t_figures
