@@ -1,0 +1,79 @@
+{
+  "name": "prox_voice_pipeline",
+  "properties": {
+    "description": "Azure Data Factory equivalent of the Airflow DAG: bronze -> silver -> gold -> checkpoint -> parity -> figures. Each activity runs the same pipeline module on a Databricks Spark cluster.",
+    "activities": [
+      {
+        "name": "land_bronze",
+        "type": "DatabricksSparkPython",
+        "dependsOn": [],
+        "policy": { "retry": 2, "retryIntervalInSeconds": 120 },
+        "typeProperties": {
+          "pythonFile": "dbfs:/pipeline/ingest/land_raw.py"
+        },
+        "linkedServiceName": { "referenceName": "AzureDatabricks", "type": "LinkedServiceReference" }
+      },
+      {
+        "name": "build_silver",
+        "type": "DatabricksSparkPython",
+        "dependsOn": [
+          { "activity": "land_bronze", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "retry": 2, "retryIntervalInSeconds": 120 },
+        "typeProperties": {
+          "pythonFile": "dbfs:/pipeline/spark/bronze_to_silver.py"
+        },
+        "linkedServiceName": { "referenceName": "AzureDatabricks", "type": "LinkedServiceReference" }
+      },
+      {
+        "name": "run_dbt",
+        "type": "DatabricksSparkPython",
+        "dependsOn": [
+          { "activity": "build_silver", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "retry": 2, "retryIntervalInSeconds": 120 },
+        "typeProperties": {
+          "pythonFile": "dbfs:/pipeline/orchestration/run_dbt.py"
+        },
+        "linkedServiceName": { "referenceName": "AzureDatabricks", "type": "LinkedServiceReference" }
+      },
+      {
+        "name": "gx_checkpoint",
+        "type": "DatabricksSparkPython",
+        "dependsOn": [
+          { "activity": "run_dbt", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "pythonFile": "dbfs:/pipeline/quality/expectations/gold_marts.py"
+        },
+        "linkedServiceName": { "referenceName": "AzureDatabricks", "type": "LinkedServiceReference" }
+      },
+      {
+        "name": "parity",
+        "type": "DatabricksSparkPython",
+        "dependsOn": [
+          { "activity": "gx_checkpoint", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "pythonFile": "dbfs:/pipeline/validate/parity_check.py"
+        },
+        "linkedServiceName": { "referenceName": "AzureDatabricks", "type": "LinkedServiceReference" }
+      },
+      {
+        "name": "render_figures",
+        "type": "DatabricksSparkPython",
+        "dependsOn": [
+          { "activity": "parity", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": {
+          "pythonFile": "dbfs:/pipeline/figures/render_all.py"
+        },
+        "linkedServiceName": { "referenceName": "AzureDatabricks", "type": "LinkedServiceReference" }
+      }
+    ],
+    "annotations": ["prox-voice", "medallion"]
+  }
+}
