@@ -32,6 +32,8 @@ lake/
 target/
 dbt_packages/
 logs/
+profiles.yml
+.user.yml
 
 # OS
 .DS_Store
