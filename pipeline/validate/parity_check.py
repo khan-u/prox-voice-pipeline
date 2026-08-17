@@ -91,5 +91,42 @@ def run_parity(spark, gold_db, data_root):
             "ok": compare_values(expected, actual),
         })
 
+    report.extend(check_report_values(spark, gold_db))
     ok = all(row["ok"] for row in report)
     return ok, report
+
+
+def _band(check, value, lo, hi):
+    return {"check": check, "expected": f"[{lo},{hi}]", "actual": value,
+            "ok": value is not None and lo <= value <= hi}
+
+
+def check_report_values(spark, gold_db):
+    """Assert the gold marts reproduce the published report headline values.
+
+    These are the figure-series claims from the study (flat mouth-to-ear latency,
+    perfect ICE at small N, a ~2.4 s mobility reconnect, a ~2.5 s audio-gap on
+    return). A drift here means a figure would no longer match the study's
+    published values.
+    """
+    report = []
+
+    kpi = {r["n_peers"]: r for r in
+           spark.read.format("delta").load(f"{gold_db}/kpi_vs_n").collect()}
+    for n, row in kpi.items():
+        report.append(_band(f"m2e N={n} flat 60-80ms", row["m2e_ms"], 60, 80))
+    for n in (2, 3, 4):
+        if n in kpi:
+            report.append({
+                "check": f"ICE N={n} == 100%", "expected": 100,
+                "actual": kpi[n]["ice_success_pct"],
+                "ok": kpi[n]["ice_success_pct"] == 100,
+            })
+
+    mob = spark.read.format("delta").load(f"{gold_db}/mobility_cycles").collect()[0]
+    report.append(_band("mobility reconnect ~2.4s", mob["reconnect_median_ms"], 2000, 2700))
+
+    ag = spark.read.format("delta").load(f"{gold_db}/audiogap").collect()[0]
+    report.append(_band("audiogap reconnect ~2.5s", ag["reconnect_median_ms"], 2300, 3200))
+
+    return report
