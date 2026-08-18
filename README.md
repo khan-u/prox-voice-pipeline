@@ -2,7 +2,28 @@
 
 **"PROX-VOICE: A Proximity-Driven WebRTC Voice Mesh for Wireless Sensor Network Emulation in Browser-Based Virtual Environments"**.
 
-PROX-VOICE treats a browser-based virtual world as a mobile ad-hoc network (MANET). Each client maintains direct peer-to-peer WebRTC audio links only to the neighbours within its proximity radius, forming a leaderless, self-organising voice mesh without a central media server. This repository contains the full implementation, the acoustic loopback measurement rig, the experiment harnesses, and the raw telemetry collected during the measurement study.
+PROX-VOICE treats a browser-based virtual world as a mobile ad-hoc network (MANET). Each client maintains direct peer-to-peer WebRTC audio links only to the neighbours within its proximity radius, forming a leaderless, self-organising voice mesh without a central media server. This repository contains the full implementation, the acoustic loopback measurement rig, the experiment harnesses, the raw telemetry collected during the measurement study, and a data-engineering pipeline that lands that telemetry in a warehouse, tests it, and rebuilds the report figures from it.
+
+<p align="center"><img src="pipeline/figures/fig04_m2e.png" width="440" alt="Mouth-to-ear latency vs N, rebuilt from the warehouse tables"><br>
+<sub>Mouth-to-ear latency vs cluster size — rebuilt from the gold marts by this pipeline and checked against the report's original.</sub></p>
+
+---
+
+## Data engineering pipeline (`pipeline/`)
+
+[`pipeline/`](pipeline/README.md) rebuilds the study's `aggregate.py` reduction as
+a medallion lakehouse. The raw JSON and the real-network stream land in a bronze
+Delta layer; silver explodes and flattens them into a fact table and per-experiment
+tables with PySpark; dbt builds and tests the gold result marts. Great Expectations
+adds data-quality checks, Airflow runs the stages (with an Azure Data Factory
+equivalent), and the report figures are drawn from the marts. A parity step keeps
+`aggregate.py` as the reference and fails the run if the marts drift from it.
+
+Everything runs locally against the checked-in telemetry; the same code targets
+Azure by switching `config/pipeline.yml` from `local` to `azure`.
+
+See [`pipeline/README.md`](pipeline/README.md) for the layout, run guide,
+local/Azure mapping, and figure list.
 
 ---
 
@@ -20,7 +41,7 @@ rig/                Acoustic loopback latency rig (C++17)
   wav.hpp           RIFF PCM-16 reader/writer
   stimulus.cpp      Hann-windowed 2 kHz click-train generator
   synth_recording.cpp  Synthetic stereo recorder (known delay + noise)
-  analyze.cpp       Cross-correlation analyzer, quality gates, CSV + stats output
+  analyze.cpp       Cross-correlation analyzer, quality + minimum-lag gates, CSV + stats output
   Makefile          Build + self-test (synthesised 85 ms ground truth)
   tests/            node:test unit checks for DSP and WAV round-trip
 
@@ -41,6 +62,15 @@ experiments/        Node.js + Python measurement harnesses
   baseline/         Server-mixed SFU baseline (werift + ws)
   aggregate.py      Consolidates data/ into the result tables
   data/             Raw experiment telemetry (134 JSON/JSONL files)
+
+pipeline/           Data-engineering lakehouse (see pipeline/README.md)
+  ingest/           Bronze: JSON exports + JSONL stream → Delta
+  spark/            Silver: schemas, transforms, bronze→silver jobs
+  dbt/              Gold marts + dbt tests (dbt-spark)
+  quality/          Great Expectations suites + checkpoint
+  figures/          Report figures regenerated from the gold marts
+  orchestration/    Airflow DAG + Azure Data Factory pipeline
+  validate/         Parity gate against aggregate.py
 ```
 
 ---
@@ -92,7 +122,9 @@ The harnesses drive the browser client via Playwright and read results from the 
 |--------|---------|
 | `wsnGame.loggedIn()` | Login completion check |
 | `wsnVoice.kpis()` | Voice mesh KPI export |
-| `wsnVoiceCtl._pcs` | Map of RTCPeerConnection objects (for getStats) |
+| `wsnVoiceCtl.rxAudio()` | Inbound-RTP probe: packets, emitted samples, audio level |
+| `wsnVoiceCtl.peerIndices()` | Server indices of connected voice peers |
+| `wsnVoice.setCalibrationMs(C)` | Applies the rig-measured device constant |
 | `wsnVoiceCtl.grace?.()` | Grace-window accessor |
 | `wsnVoiceCtl.linkDebug()` | Per-link debug state |
 | `wsnSense.stats()` | Sensor suppression stats |
